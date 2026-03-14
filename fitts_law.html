@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fitts' Law Interactive Explorer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f3; color: #1a1a18; padding: 2rem; max-width: 760px; margin: 0 auto; }
+    h1 { font-size: 22px; font-weight: 500; margin-bottom: 0.25rem; }
+    .subtitle { font-size: 14px; color: #5f5e5a; margin-bottom: 0.5rem; }
+    .formula { font-size: 15px; color: #444441; margin-bottom: 1.5rem; background: #ebebeb; display: inline-block; padding: 6px 14px; border-radius: 8px; }
+    .slider-row { display: flex; align-items: center; gap: 12px; margin-bottom: 1rem; }
+    .slider-row label { font-size: 13px; color: #5f5e5a; width: 80px; flex-shrink: 0; }
+    .slider-row input[type=range] { flex: 1; accent-color: #534AB7; }
+    .slider-row .val { font-size: 14px; font-weight: 500; color: #1a1a18; min-width: 56px; text-align: right; }
+    .metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin-bottom: 1.5rem; }
+    .metric { background: #ebebeb; border-radius: 8px; padding: 12px; }
+    .metric .mlabel { font-size: 12px; color: #5f5e5a; margin-bottom: 4px; }
+    .metric .mval { font-size: 22px; font-weight: 500; color: #1a1a18; }
+    #arena { position: relative; width: 100%; height: 180px; background: #ebebeb; border-radius: 12px; border: 0.5px solid #ccc; overflow: hidden; margin-bottom: 1rem; }
+    #cursor { position: absolute; width: 10px; height: 10px; background: #534AB7; border-radius: 50%; transform: translate(-50%,-50%); pointer-events: none; }
+    #target { position: absolute; background: #E1F5EE; border: 2px solid #1D9E75; border-radius: 50%; transform: translate(-50%,-50%); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.15s; }
+    #target:hover { background: #9FE1CB; }
+    #target.hit { background: #5DCAA5; }
+    .legend { display: flex; gap: 16px; font-size: 12px; color: #5f5e5a; margin-bottom: 1rem; }
+    .leg-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+    .chart-wrap { position: relative; width: 100%; height: 220px; }
+    .chart-legend { display: flex; gap: 16px; font-size: 12px; color: #5f5e5a; margin-top: 8px; margin-bottom: 1.5rem; }
+    .chart-legend span { display: flex; align-items: center; gap: 5px; }
+    .chart-legend .swatch { width: 20px; height: 3px; border-radius: 2px; display: inline-block; }
+    footer { margin-top: 2rem; font-size: 12px; color: #888780; border-top: 0.5px solid #ccc; padding-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Fitts' Law</h1>
+  <p class="subtitle">Predicts how long it takes to move a pointer and click a target.</p>
+  <div class="formula">MT = a + b · log₂(2D / W)</div>
+
+  <div class="slider-row">
+    <label>Distance (D)</label>
+    <input type="range" id="distSlider" min="50" max="500" step="10" value="250">
+    <span class="val" id="distVal">250 px</span>
+  </div>
+  <div class="slider-row">
+    <label>Width (W)</label>
+    <input type="range" id="widthSlider" min="10" max="150" step="5" value="50">
+    <span class="val" id="widthVal">50 px</span>
+  </div>
+
+  <div class="metric-grid">
+    <div class="metric"><div class="mlabel">Index of difficulty</div><div class="mval" id="idVal">—</div></div>
+    <div class="metric"><div class="mlabel">Movement time</div><div class="mval" id="mtVal">—</div></div>
+    <div class="metric"><div class="mlabel">D / W ratio</div><div class="mval" id="ratioVal">—</div></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="leg-dot" style="background:#534AB7;"></span>cursor start</span>
+    <span><span class="leg-dot" style="background:#1D9E75;"></span>target — click it!</span>
+  </div>
+
+  <div id="arena">
+    <div id="cursor"></div>
+    <div id="target"></div>
+    <svg id="distLine" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;">
+      <line id="dline" stroke="#AFA9EC" stroke-width="1" stroke-dasharray="4 4"/>
+      <text id="dlabel" font-size="11" fill="#7F77DD"></text>
+    </svg>
+  </div>
+
+  <div class="chart-legend">
+    <span><span class="swatch" style="background:#534AB7;"></span>vary distance</span>
+    <span><span class="swatch" style="background:#1D9E75;"></span>vary width</span>
+    <span><span class="leg-dot" style="background:#D85A30; width:10px; height:10px; border-radius:50%;"></span>current</span>
+  </div>
+  <div class="chart-wrap"><canvas id="chart"></canvas></div>
+
+  <footer>
+    MT = movement time &nbsp;|&nbsp; D = distance to target &nbsp;|&nbsp; W = target width &nbsp;|&nbsp; a = 0.1, b = 0.15 (typical empirical constants)
+  </footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <script>
+    const a = 0.1, b = 0.15;
+    function mt(D, W) { return a + b * Math.log2(2 * D / W); }
+    function idiff(D, W) { return Math.log2(2 * D / W); }
+
+    const distSlider = document.getElementById('distSlider');
+    const widthSlider = document.getElementById('widthSlider');
+    const arena = document.getElementById('arena');
+    const cursor = document.getElementById('cursor');
+    const target = document.getElementById('target');
+    const dline = document.getElementById('dline');
+    const dlabel = document.getElementById('dlabel');
+
+    function update() {
+      const D = +distSlider.value, W = +widthSlider.value;
+      document.getElementById('distVal').textContent = D + ' px';
+      document.getElementById('widthVal').textContent = W + ' px';
+      const idv = idiff(D, W), mtv = mt(D, W);
+      document.getElementById('idVal').textContent = idv.toFixed(2) + ' bits';
+      document.getElementById('mtVal').textContent = (mtv * 1000).toFixed(0) + ' ms';
+      document.getElementById('ratioVal').textContent = (D / W).toFixed(1);
+
+      const aW = arena.offsetWidth || 600, aH = arena.offsetHeight || 180;
+      const cx = 40, cy = aH / 2;
+      const tx = Math.min(cx + D, aW - W / 2 - 10), ty = aH / 2;
+      cursor.style.left = cx + 'px'; cursor.style.top = cy + 'px';
+      target.style.left = tx + 'px'; target.style.top = ty + 'px';
+      target.style.width = W + 'px'; target.style.height = W + 'px';
+      dline.setAttribute('x1', cx); dline.setAttribute('y1', cy);
+      dline.setAttribute('x2', tx); dline.setAttribute('y2', ty);
+      dlabel.setAttribute('x', (cx + tx) / 2); dlabel.setAttribute('y', cy - 8);
+      dlabel.textContent = 'D = ' + D + 'px';
+      updateChart(D, W);
+    }
+
+    distSlider.addEventListener('input', update);
+    widthSlider.addEventListener('input', update);
+    target.addEventListener('click', () => { target.classList.add('hit'); setTimeout(() => target.classList.remove('hit'), 300); });
+
+    const ctx = document.getElementById('chart').getContext('2d');
+    const chartInst = new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [
+        { label: 'vary distance', data: [], borderColor: '#534AB7', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.3 },
+        { label: 'vary width', data: [], borderColor: '#1D9E75', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.3 },
+        { label: 'current', data: [], borderColor: '#D85A30', borderWidth: 0, pointRadius: 7, pointBackgroundColor: '#D85A30', showLine: false }
+      ]},
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.dataset.label + ': ' + (c.parsed.y * 1000).toFixed(0) + ' ms' } } },
+        scales: {
+          x: { title: { display: true, text: 'index of difficulty (bits)', font: { size: 12 }, color: '#888780' }, ticks: { color: '#888780', font: { size: 11 } }, grid: { color: 'rgba(136,135,128,0.15)' } },
+          y: { title: { display: true, text: 'movement time (ms)', font: { size: 12 }, color: '#888780' }, ticks: { color: '#888780', font: { size: 11 }, callback: v => (v * 1000).toFixed(0) }, grid: { color: 'rgba(136,135,128,0.15)' } }
+        }
+      }
+    });
+
+    function updateChart(D, W) {
+      const ids = [], mts_d = [];
+      for (let d = 30; d <= 600; d += 20) { const iv = idiff(d, W); if (iv > 0) { ids.push(+iv.toFixed(2)); mts_d.push(+mt(d, W).toFixed(4)); } }
+      const ids2 = [], mts_w = [];
+      for (let w = 10; w <= 200; w += 5) { const iv = idiff(D, w); if (iv > 0) { ids2.push(+iv.toFixed(2)); mts_w.push(+mt(D, w).toFixed(4)); } }
+      const allIds = [...new Set([...ids, ...ids2])].sort((a, b) => a - b);
+      chartInst.data.labels = allIds.map(v => v.toFixed(1));
+      chartInst.data.datasets[0].data = allIds.map(xi => { const i = ids.findIndex(v => Math.abs(v - xi) < 0.01); return i >= 0 ? mts_d[i] : null; });
+      chartInst.data.datasets[1].data = allIds.map(xi => { const i = ids2.findIndex(v => Math.abs(v - xi) < 0.01); return i >= 0 ? mts_w[i] : null; });
+      const ci = idiff(D, W), cm = mt(D, W);
+      const closest = allIds.reduce((best, v, i) => Math.abs(v - ci) < Math.abs(allIds[best] - ci) ? i : best, 0);
+      chartInst.data.datasets[2].data = allIds.map((_, i) => i === closest ? cm : null);
+      chartInst.update('none');
+    }
+
+    update();
+  </script>
+</body>
+</html>
